@@ -30,6 +30,7 @@ const (
 	ProxyIgnoreHeaders = "proxy_ignore_headers"
 	AudioAutoplay      = "audio_autoplay"
 	VideoAutoplay      = "video_autoplay"
+	DandanplayDanmakuEnabled = "dandanplay_danmaku_enabled"
 
 	// global
 	HideFiles               = "hide_files"
