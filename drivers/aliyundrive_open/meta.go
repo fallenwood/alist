@@ -6,7 +6,7 @@ import (
 )
 
 type Addition struct {
-	DriveType string `json:"drive_type" type:"select" options:"default,resource,backup" default:"default"`
+	DriveType string `json:"drive_type" type:"select" options:"default,resource,backup" default:"resource"`
 	driver.RootID
 	RefreshToken       string `json:"refresh_token" required:"true"`
 	OrderBy            string `json:"order_by" type:"select" options:"name,size,updated_at,created_at"`
@@ -36,7 +36,7 @@ var config = driver.Config{
 func init() {
 	op.RegisterDriver(func() driver.Driver {
 		return &AliyundriveOpen{
-			base: "https://openapi.aliyundrive.com",
+			base: "https://openapi.alipan.com",
 		}
 	})
 }

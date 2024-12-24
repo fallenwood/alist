@@ -8,15 +8,22 @@ import (
 )
 
 type Database struct {
-	Type        string `json:"type" env:"DB_TYPE"`
-	Host        string `json:"host" env:"DB_HOST"`
-	Port        int    `json:"port" env:"DB_PORT"`
-	User        string `json:"user" env:"DB_USER"`
-	Password    string `json:"password" env:"DB_PASS"`
-	Name        string `json:"name" env:"DB_NAME"`
-	DBFile      string `json:"db_file" env:"DB_FILE"`
-	TablePrefix string `json:"table_prefix" env:"DB_TABLE_PREFIX"`
-	SSLMode     string `json:"ssl_mode" env:"DB_SSL_MODE"`
+	Type        string `json:"type" env:"TYPE"`
+	Host        string `json:"host" env:"HOST"`
+	Port        int    `json:"port" env:"PORT"`
+	User        string `json:"user" env:"USER"`
+	Password    string `json:"password" env:"PASS"`
+	Name        string `json:"name" env:"NAME"`
+	DBFile      string `json:"db_file" env:"FILE"`
+	TablePrefix string `json:"table_prefix" env:"TABLE_PREFIX"`
+	SSLMode     string `json:"ssl_mode" env:"SSL_MODE"`
+	DSN         string `json:"dsn" env:"DSN"`
+}
+
+type Meilisearch struct {
+	Host        string `json:"host" env:"HOST"`
+	APIKey      string `json:"api_key" env:"API_KEY"`
+	IndexPrefix string `json:"index_prefix" env:"INDEX_PREFIX"`
 }
 
 type Scheme struct {
@@ -39,20 +46,70 @@ type LogConfig struct {
 	Compress   bool   `json:"compress" env:"COMPRESS"`
 }
 
+type TaskConfig struct {
+	Workers        int  `json:"workers" env:"WORKERS"`
+	MaxRetry       int  `json:"max_retry" env:"MAX_RETRY"`
+	TaskPersistant bool `json:"task_persistant" env:"TASK_PERSISTANT"`
+}
+
+type TasksConfig struct {
+	Download TaskConfig `json:"download" envPrefix:"DOWNLOAD_"`
+	Transfer TaskConfig `json:"transfer" envPrefix:"TRANSFER_"`
+	Upload   TaskConfig `json:"upload" envPrefix:"UPLOAD_"`
+	Copy     TaskConfig `json:"copy" envPrefix:"COPY_"`
+}
+
+type Cors struct {
+	AllowOrigins []string `json:"allow_origins" env:"ALLOW_ORIGINS"`
+	AllowMethods []string `json:"allow_methods" env:"ALLOW_METHODS"`
+	AllowHeaders []string `json:"allow_headers" env:"ALLOW_HEADERS"`
+}
+
+type S3 struct {
+	Enable bool `json:"enable" env:"ENABLE"`
+	Port   int  `json:"port" env:"PORT"`
+	SSL    bool `json:"ssl" env:"SSL"`
+}
+
+type FTP struct {
+	Enable                  bool   `json:"enable" env:"ENABLE"`
+	Listen                  string `json:"listen" env:"LISTEN"`
+	FindPasvPortAttempts    int    `json:"find_pasv_port_attempts" env:"FIND_PASV_PORT_ATTEMPTS"`
+	ActiveTransferPortNon20 bool   `json:"active_transfer_port_non_20" env:"ACTIVE_TRANSFER_PORT_NON_20"`
+	IdleTimeout             int    `json:"idle_timeout" env:"IDLE_TIMEOUT"`
+	ConnectionTimeout       int    `json:"connection_timeout" env:"CONNECTION_TIMEOUT"`
+	DisableActiveMode       bool   `json:"disable_active_mode" env:"DISABLE_ACTIVE_MODE"`
+	DefaultTransferBinary   bool   `json:"default_transfer_binary" env:"DEFAULT_TRANSFER_BINARY"`
+	EnableActiveConnIPCheck bool   `json:"enable_active_conn_ip_check" env:"ENABLE_ACTIVE_CONN_IP_CHECK"`
+	EnablePasvConnIPCheck   bool   `json:"enable_pasv_conn_ip_check" env:"ENABLE_PASV_CONN_IP_CHECK"`
+}
+
+type SFTP struct {
+	Enable bool   `json:"enable" env:"ENABLE"`
+	Listen string `json:"listen" env:"LISTEN"`
+}
+
 type Config struct {
-	Force                 bool      `json:"force" env:"FORCE"`
-	SiteURL               string    `json:"site_url" env:"SITE_URL"`
-	Cdn                   string    `json:"cdn" env:"CDN"`
-	JwtSecret             string    `json:"jwt_secret" env:"JWT_SECRET"`
-	TokenExpiresIn        int       `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
-	Database              Database  `json:"database"`
-	Scheme                Scheme    `json:"scheme"`
-	TempDir               string    `json:"temp_dir" env:"TEMP_DIR"`
-	BleveDir              string    `json:"bleve_dir" env:"BLEVE_DIR"`
-	Log                   LogConfig `json:"log"`
-	DelayedStart          int       `json:"delayed_start" env:"DELAYED_START"`
-	MaxConnections        int       `json:"max_connections" env:"MAX_CONNECTIONS"`
-	TlsInsecureSkipVerify bool      `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
+	Force                 bool        `json:"force" env:"FORCE"`
+	SiteURL               string      `json:"site_url" env:"SITE_URL"`
+	Cdn                   string      `json:"cdn" env:"CDN"`
+	JwtSecret             string      `json:"jwt_secret" env:"JWT_SECRET"`
+	TokenExpiresIn        int         `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
+	Database              Database    `json:"database" envPrefix:"DB_"`
+	Meilisearch           Meilisearch `json:"meilisearch" envPrefix:"MEILISEARCH_"`
+	Scheme                Scheme      `json:"scheme"`
+	TempDir               string      `json:"temp_dir" env:"TEMP_DIR"`
+	BleveDir              string      `json:"bleve_dir" env:"BLEVE_DIR"`
+	DistDir               string      `json:"dist_dir"`
+	Log                   LogConfig   `json:"log"`
+	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
+	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
+	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
+	Tasks                 TasksConfig `json:"tasks" envPrefix:"TASKS_"`
+	Cors                  Cors        `json:"cors" envPrefix:"CORS_"`
+	S3                    S3          `json:"s3" envPrefix:"S3_"`
+	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
+	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
 }
 
 func DefaultConfig() *Config {
@@ -79,6 +136,9 @@ func DefaultConfig() *Config {
 			TablePrefix: "x_",
 			DBFile:      dbPath,
 		},
+		Meilisearch: Meilisearch{
+			Host: "http://localhost:7700",
+		},
 		BleveDir: indexDir,
 		Log: LogConfig{
 			Enable:     true,
@@ -89,5 +149,51 @@ func DefaultConfig() *Config {
 		},
 		MaxConnections:        0,
 		TlsInsecureSkipVerify: true,
+		Tasks: TasksConfig{
+			Download: TaskConfig{
+				Workers:  5,
+				MaxRetry: 1,
+				// TaskPersistant: true,
+			},
+			Transfer: TaskConfig{
+				Workers:  5,
+				MaxRetry: 2,
+				// TaskPersistant: true,
+			},
+			Upload: TaskConfig{
+				Workers: 5,
+			},
+			Copy: TaskConfig{
+				Workers:  5,
+				MaxRetry: 2,
+				// TaskPersistant: true,
+			},
+		},
+		Cors: Cors{
+			AllowOrigins: []string{"*"},
+			AllowMethods: []string{"*"},
+			AllowHeaders: []string{"*"},
+		},
+		S3: S3{
+			Enable: false,
+			Port:   5246,
+			SSL:    false,
+		},
+		FTP: FTP{
+			Enable:                  false,
+			Listen:                  ":5221",
+			FindPasvPortAttempts:    50,
+			ActiveTransferPortNon20: false,
+			IdleTimeout:             900,
+			ConnectionTimeout:       30,
+			DisableActiveMode:       false,
+			DefaultTransferBinary:   false,
+			EnableActiveConnIPCheck: true,
+			EnablePasvConnIPCheck:   true,
+		},
+		SFTP: SFTP{
+			Enable: false,
+			Listen: ":5222",
+		},
 	}
 }

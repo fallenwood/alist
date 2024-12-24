@@ -27,9 +27,9 @@ type BaiduPhoto struct {
 	model.Storage
 	Addition
 
-	AccessToken string
-	Uk          int64
-	root        model.Obj
+	// AccessToken string
+	Uk   int64
+	root model.Obj
 
 	uploadThread int
 }
@@ -48,9 +48,9 @@ func (d *BaiduPhoto) Init(ctx context.Context) error {
 		d.uploadThread, d.UploadThread = 3, "3"
 	}
 
-	if err := d.refreshToken(); err != nil {
-		return err
-	}
+	// if err := d.refreshToken(); err != nil {
+	// 	return err
+	// }
 
 	// root
 	if d.AlbumID != "" {
@@ -82,7 +82,7 @@ func (d *BaiduPhoto) GetRoot(ctx context.Context) (model.Obj, error) {
 }
 
 func (d *BaiduPhoto) Drop(ctx context.Context) error {
-	d.AccessToken = ""
+	// d.AccessToken = ""
 	d.Uk = 0
 	d.root = nil
 	return nil
@@ -137,13 +137,18 @@ func (d *BaiduPhoto) Link(ctx context.Context, file model.Obj, args model.LinkAr
 	case *File:
 		return d.linkFile(ctx, file, args)
 	case *AlbumFile:
-		f, err := d.CopyAlbumFile(ctx, file)
-		if err != nil {
-			return nil, err
+		// 处理共享相册
+		if d.Uk != file.Uk {
+			// 有概率无法获取到链接
+			// return d.linkAlbum(ctx, file, args)
+
+			f, err := d.CopyAlbumFile(ctx, file)
+			if err != nil {
+				return nil, err
+			}
+			return d.linkFile(ctx, f, args)
 		}
-		return d.linkFile(ctx, f, args)
-		// 有概率无法获取到链接
-		//return d.linkAlbum(ctx, file, args)
+		return d.linkFile(ctx, &file.File, args)
 	}
 	return nil, errs.NotFile
 }
@@ -261,7 +266,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 		if i == count {
 			byteSize = lastBlockSize
 		}
-		_, err := io.CopyN(io.MultiWriter(fileMd5H, sliceMd5H, slicemd5H2Write), tempFile, byteSize)
+		_, err := utils.CopyWithBufferN(io.MultiWriter(fileMd5H, sliceMd5H, slicemd5H2Write), tempFile, byteSize)
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
@@ -286,7 +291,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	}
 
 	// 尝试获取之前的进度
-	precreateResp, ok := base.GetUploadProgress[*PrecreateResp](d, d.AccessToken, contentMd5)
+	precreateResp, ok := base.GetUploadProgress[*PrecreateResp](d, strconv.FormatInt(d.Uk, 10), contentMd5)
 	if !ok {
 		_, err = d.Post(FILE_API_URL_V1+"/precreate", func(r *resty.Request) {
 			r.SetContext(ctx)
@@ -329,7 +334,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 				if err != nil {
 					return err
 				}
-				up(int(threadG.Success()) * 100 / len(precreateResp.BlockList))
+				up(float64(threadG.Success()) * 100 / float64(len(precreateResp.BlockList)))
 				precreateResp.BlockList[i] = -1
 				return nil
 			})
@@ -337,7 +342,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 		if err = threadG.Wait(); err != nil {
 			if errors.Is(err, context.Canceled) {
 				precreateResp.BlockList = utils.SliceFilter(precreateResp.BlockList, func(s int) bool { return s >= 0 })
-				base.SaveUploadProgress(d, precreateResp, d.AccessToken, contentMd5)
+				base.SaveUploadProgress(d, strconv.FormatInt(d.Uk, 10), contentMd5)
 			}
 			return nil, err
 		}

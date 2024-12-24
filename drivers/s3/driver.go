@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/alist-org/alist/v3/internal/stream"
+	"github.com/alist-org/alist/v3/server/common"
 	"io"
 	"net/url"
 	stdpath "path"
 	"strings"
 	"time"
+
+	"github.com/alist-org/alist/v3/internal/stream"
+	"github.com/alist-org/alist/v3/pkg/cron"
 
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/model"
@@ -25,10 +28,13 @@ type S3 struct {
 	Session    *session.Session
 	client     *s3.S3
 	linkClient *s3.S3
+
+	config driver.Config
+	cron   *cron.Cron
 }
 
 func (d *S3) Config() driver.Config {
-	return config
+	return d.config
 }
 
 func (d *S3) GetAddition() driver.Additional {
@@ -38,6 +44,18 @@ func (d *S3) GetAddition() driver.Additional {
 func (d *S3) Init(ctx context.Context) error {
 	if d.Region == "" {
 		d.Region = "alist"
+	}
+	if d.config.Name == "Doge" {
+		// 多吉云每次临时生成的秘钥有效期为 2h，所以这里设置为 118 分钟重新生成一次
+		d.cron = cron.NewCron(time.Minute * 118)
+		d.cron.Do(func() {
+			err := d.initSession()
+			if err != nil {
+				log.Errorln("Doge init session error:", err)
+			}
+			d.client = d.getClient(false)
+			d.linkClient = d.getClient(true)
+		})
 	}
 	err := d.initSession()
 	if err != nil {
@@ -49,6 +67,9 @@ func (d *S3) Init(ctx context.Context) error {
 }
 
 func (d *S3) Drop(ctx context.Context) error {
+	if d.cron != nil {
+		d.cron.Stop()
+	}
 	return nil
 }
 
@@ -75,23 +96,27 @@ func (d *S3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*mo
 		input.ResponseContentDisposition = &disposition
 	}
 	req, _ := d.linkClient.GetObjectRequest(input)
-	var link string
+	var link model.Link
 	var err error
 	if d.CustomHost != "" {
 		err = req.Build()
-		link = req.HTTPRequest.URL.String()
+		link.URL = req.HTTPRequest.URL.String()
 		if d.RemoveBucket {
-			link = strings.Replace(link, "/"+d.Bucket, "", 1)
+			link.URL = strings.Replace(link.URL, "/"+d.Bucket, "", 1)
 		}
 	} else {
-		link, err = req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+		if common.ShouldProxy(d, filename) {
+			err = req.Sign()
+			link.URL = req.HTTPRequest.URL.String()
+			link.Header = req.HTTPRequest.Header
+		} else {
+			link.URL, err = req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &model.Link{
-		URL: link,
-	}, nil
+	return &link, nil
 }
 
 func (d *S3) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
@@ -104,7 +129,7 @@ func (d *S3) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) e
 		},
 		Reader:   io.NopCloser(bytes.NewReader([]byte{})),
 		Mimetype: "application/octet-stream",
-	}, func(int) {})
+	}, func(float64) {})
 }
 
 func (d *S3) Move(ctx context.Context, srcObj, dstDir model.Obj) error {

@@ -118,7 +118,7 @@ func (d *OnedriveAPP) Request(url string, method string, callback base.ReqCallba
 
 func (d *OnedriveAPP) getFiles(path string) ([]File, error) {
 	var res []File
-	nextLink := d.GetMetaUrl(false, path) + "/children?$top=5000&$expand=thumbnails($select=medium)&$select=id,name,size,lastModifiedDateTime,content.downloadUrl,file,parentReference"
+	nextLink := d.GetMetaUrl(false, path) + "/children?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,lastModifiedDateTime,content.downloadUrl,file,parentReference"
 	for nextLink != "" {
 		var files Files
 		_, err := d.Request(nextLink, http.MethodGet, nil, &files)
@@ -194,7 +194,7 @@ func (d *OnedriveAPP) upBig(ctx context.Context, dstDir model.Obj, stream model.
 			return errors.New(string(data))
 		}
 		res.Body.Close()
-		up(int(finish * 100 / stream.GetSize()))
+		up(float64(finish) * 100 / float64(stream.GetSize()))
 	}
 	return nil
 }

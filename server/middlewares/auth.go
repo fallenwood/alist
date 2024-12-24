@@ -57,6 +57,12 @@ func Auth(c *gin.Context) {
 		c.Abort()
 		return
 	}
+	// validate password timestamp
+	if userClaims.PwdTS != user.PwdTS {
+		common.ErrorStrResp(c, "Password has been changed, login please", 401)
+		c.Abort()
+		return
+	}
 	if user.Disabled {
 		common.ErrorStrResp(c, "Current user is disabled, replace please", 401)
 		c.Abort()
@@ -105,6 +111,12 @@ func Authn(c *gin.Context) {
 		c.Abort()
 		return
 	}
+	// validate password timestamp
+	if userClaims.PwdTS != user.PwdTS {
+		common.ErrorStrResp(c, "Password has been changed, login please", 401)
+		c.Abort()
+		return
+	}
 	if user.Disabled {
 		common.ErrorStrResp(c, "Current user is disabled, replace please", 401)
 		c.Abort()
@@ -113,6 +125,16 @@ func Authn(c *gin.Context) {
 	c.Set("user", user)
 	log.Debugf("use login token: %+v", user)
 	c.Next()
+}
+
+func AuthNotGuest(c *gin.Context) {
+	user := c.MustGet("user").(*model.User)
+	if user.IsGuest() {
+		common.ErrorStrResp(c, "You are a guest", 403)
+		c.Abort()
+	} else {
+		c.Next()
+	}
 }
 
 func AuthAdmin(c *gin.Context) {

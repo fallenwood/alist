@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alist-org/alist/v3/pkg/utils"
+
 	"github.com/alist-org/alist/v3/pkg/http_range"
 	"github.com/aws/aws-sdk-go/aws/awsutil"
 	log "github.com/sirupsen/logrus"
@@ -167,6 +169,7 @@ func (d *downloader) sendChunkTask() *chunk {
 
 // when the final reader Close, we interrupt
 func (d *downloader) interrupt() error {
+
 	d.cancel()
 	if d.written != d.params.Range.Length {
 		log.Debugf("Downloader interrupt before finish")
@@ -271,7 +274,7 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 		}
 	}
 
-	n, err := io.Copy(ch.buf, resp.Body)
+	n, err := utils.CopyWithBuffer(ch.buf, resp.Body)
 
 	if err != nil {
 		return n, &errReadingBody{err: err}
@@ -449,16 +452,20 @@ type Buf struct {
 	size   int //expected size
 	ctx    context.Context
 	off    int
-	rw     sync.RWMutex
-	notify chan struct{}
+	rw     sync.Mutex
+	//notify chan struct{}
 }
 
 // NewBuf is a buffer that can have 1 read & 1 write at the same time.
 // when read is faster write, immediately feed data to read after written
 func NewBuf(ctx context.Context, maxSize int, id int) *Buf {
 	d := make([]byte, 0, maxSize)
-	return &Buf{ctx: ctx, buffer: bytes.NewBuffer(d), size: maxSize, notify: make(chan struct{})}
-
+	return &Buf{
+		ctx:    ctx,
+		buffer: bytes.NewBuffer(d),
+		size:   maxSize,
+		//notify: make(chan struct{}),
+	}
 }
 func (br *Buf) Reset(size int) {
 	br.buffer.Reset()
@@ -476,9 +483,9 @@ func (br *Buf) Read(p []byte) (n int, err error) {
 	if br.off >= br.size {
 		return 0, io.EOF
 	}
-	br.rw.RLock()
+	br.rw.Lock()
 	n, err = br.buffer.Read(p)
-	br.rw.RUnlock()
+	br.rw.Unlock()
 	if err == nil {
 		br.off += n
 		return n, err
@@ -495,8 +502,8 @@ func (br *Buf) Read(p []byte) (n int, err error) {
 	select {
 	case <-br.ctx.Done():
 		return 0, br.ctx.Err()
-	case <-br.notify:
-		return 0, nil
+	//case <-br.notify:
+	//	return 0, nil
 	case <-time.After(time.Millisecond * 200):
 		return 0, nil
 	}
@@ -510,12 +517,12 @@ func (br *Buf) Write(p []byte) (n int, err error) {
 	defer br.rw.Unlock()
 	n, err = br.buffer.Write(p)
 	select {
-	case br.notify <- struct{}{}:
+	//case br.notify <- struct{}{}:
 	default:
 	}
 	return
 }
 
 func (br *Buf) Close() {
-	close(br.notify)
+	//close(br.notify)
 }

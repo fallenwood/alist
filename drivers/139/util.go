@@ -13,6 +13,7 @@ import (
 
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/internal/op"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/pkg/utils/random"
 	"github.com/go-resty/resty/v2"
@@ -50,6 +51,32 @@ func calSign(body, ts, randStr string) string {
 func getTime(t string) time.Time {
 	stamp, _ := time.ParseInLocation("20060102150405", t, utils.CNLoc)
 	return stamp
+}
+
+func (d *Yun139) refreshToken() error {
+	url := "https://aas.caiyun.feixin.10086.cn:443/tellin/authTokenRefresh.do"
+	var resp RefreshTokenResp
+	decode, err := base64.StdEncoding.DecodeString(d.Authorization)
+	if err != nil {
+		return err
+	}
+	decodeStr := string(decode)
+	splits := strings.Split(decodeStr, ":")
+	reqBody := "<root><token>" + splits[2] + "</token><account>" + splits[1] + "</account><clienttype>656</clienttype></root>"
+	_, err = base.RestyClient.R().
+		ForceContentType("application/xml").
+		SetBody(reqBody).
+		SetResult(&resp).
+		Post(url)
+	if err != nil {
+		return err
+	}
+	if resp.Return != "0" {
+		return fmt.Errorf("failed to refresh token: %s", resp.Desc)
+	}
+	d.Authorization = base64.StdEncoding.EncodeToString([]byte(splits[0] + ":" + splits[1] + ":" + resp.Token))
+	op.MustSaveDriverStorage(d)
+	return nil
 }
 
 func (d *Yun139) request(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
@@ -193,10 +220,11 @@ func (d *Yun139) familyGetFiles(catalogID string) ([]model.Obj, error) {
 			"sortDirection": 1,
 		})
 		var resp QueryContentListResp
-		_, err := d.post("/orchestration/familyCloud/content/v1.0/queryContentList", data, &resp)
+		_, err := d.post("/orchestration/familyCloud-rebuild/content/v1.2/queryContentList", data, &resp)
 		if err != nil {
 			return nil, err
 		}
+		path := resp.Data.Path
 		for _, catalog := range resp.Data.CloudCatalogList {
 			f := model.Object{
 				ID:       catalog.CatalogID,
@@ -205,6 +233,7 @@ func (d *Yun139) familyGetFiles(catalogID string) ([]model.Obj, error) {
 				IsFolder: true,
 				Modified: getTime(catalog.LastUpdateTime),
 				Ctime:    getTime(catalog.CreateTime),
+				Path:     path, // 文件夹上一级的Path
 			}
 			files = append(files, &f)
 		}
@@ -216,6 +245,7 @@ func (d *Yun139) familyGetFiles(catalogID string) ([]model.Obj, error) {
 					Size:     content.ContentSize,
 					Modified: getTime(content.LastUpdateTime),
 					Ctime:    getTime(content.CreateTime),
+					Path:     path, // 文件所在目录的Path
 				},
 				Thumbnail: model.Thumbnail{Thumbnail: content.ThumbnailURL},
 				//Thumbnail: content.BigthumbnailURL,
@@ -226,6 +256,61 @@ func (d *Yun139) familyGetFiles(catalogID string) ([]model.Obj, error) {
 			break
 		}
 		pageNum++
+	}
+	return files, nil
+}
+
+func (d *Yun139) groupGetFiles(catalogID string) ([]model.Obj, error) {
+	pageNum := 1
+	files := make([]model.Obj, 0)
+	for {
+		data := d.newJson(base.Json{
+			"groupID":         d.CloudID,
+			"catalogID":       catalogID,
+			"contentSortType": 0,
+			"sortDirection":   1,
+			"startNumber":     pageNum,
+			"endNumber":       pageNum + 99,
+			"path":            catalogID,
+		})
+
+		var resp QueryGroupContentListResp
+		_, err := d.post("/orchestration/group-rebuild/content/v1.0/queryGroupContentList", data, &resp)
+		if err != nil {
+			return nil, err
+		}
+		path := resp.Data.GetGroupContentResult.ParentCatalogID
+		for _, catalog := range resp.Data.GetGroupContentResult.CatalogList {
+			f := model.Object{
+				ID:       catalog.CatalogID,
+				Name:     catalog.CatalogName,
+				Size:     0,
+				IsFolder: true,
+				Modified: getTime(catalog.UpdateTime),
+				Ctime:    getTime(catalog.CreateTime),
+				Path:     catalog.Path, // 文件夹的真实Path， root:/开头
+			}
+			files = append(files, &f)
+		}
+		for _, content := range resp.Data.GetGroupContentResult.ContentList {
+			f := model.ObjThumb{
+				Object: model.Object{
+					ID:       content.ContentID,
+					Name:     content.ContentName,
+					Size:     content.ContentSize,
+					Modified: getTime(content.UpdateTime),
+					Ctime:    getTime(content.CreateTime),
+					Path:     path, // 文件所在目录的Path
+				},
+				Thumbnail: model.Thumbnail{Thumbnail: content.ThumbnailURL},
+				//Thumbnail: content.BigthumbnailURL,
+			}
+			files = append(files, &f)
+		}
+		if pageNum > resp.Data.GetGroupContentResult.NodeCount {
+			break
+		}
+		pageNum = pageNum + 100
 	}
 	return files, nil
 }
@@ -246,9 +331,186 @@ func (d *Yun139) getLink(contentId string) (string, error) {
 	}
 	return jsoniter.Get(res, "data", "downloadURL").ToString(), nil
 }
+func (d *Yun139) familyGetLink(contentId string, path string) (string, error) {
+	data := d.newJson(base.Json{
+		"contentID": contentId,
+		"path":      path,
+	})
+	res, err := d.post("/orchestration/familyCloud-rebuild/content/v1.0/getFileDownLoadURL",
+		data, nil)
+	if err != nil {
+		return "", err
+	}
+	return jsoniter.Get(res, "data", "downloadURL").ToString(), nil
+}
+
+func (d *Yun139) groupGetLink(contentId string, path string) (string, error) {
+	data := d.newJson(base.Json{
+		"contentID": contentId,
+		"groupID":   d.CloudID,
+		"path":      path,
+	})
+	res, err := d.post("/orchestration/group-rebuild/groupManage/v1.0/getGroupFileDownLoadURL",
+		data, nil)
+	if err != nil {
+		return "", err
+	}
+	return jsoniter.Get(res, "data", "downloadURL").ToString(), nil
+}
 
 func unicode(str string) string {
 	textQuoted := strconv.QuoteToASCII(str)
 	textUnquoted := textQuoted[1 : len(textQuoted)-1]
 	return textUnquoted
+}
+
+func (d *Yun139) personalRequest(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	url := "https://personal-kd-njs.yun.139.com" + pathname
+	req := base.RestyClient.R()
+	randStr := random.String(16)
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	if callback != nil {
+		callback(req)
+	}
+	body, err := utils.Json.Marshal(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	sign := calSign(string(body), ts, randStr)
+	svcType := "1"
+	if d.isFamily() {
+		svcType = "2"
+	}
+	req.SetHeaders(map[string]string{
+		"Accept":               "application/json, text/plain, */*",
+		"Authorization":        "Basic " + d.Authorization,
+		"Caller":               "web",
+		"Cms-Device":           "default",
+		"Mcloud-Channel":       "1000101",
+		"Mcloud-Client":        "10701",
+		"Mcloud-Route":         "001",
+		"Mcloud-Sign":          fmt.Sprintf("%s,%s,%s", ts, randStr, sign),
+		"Mcloud-Version":       "7.13.0",
+		"Origin":               "https://yun.139.com",
+		"Referer":              "https://yun.139.com/w/",
+		"x-DeviceInfo":         "||9|7.13.0|chrome|120.0.0.0|||windows 10||zh-CN|||",
+		"x-huawei-channelSrc":  "10000034",
+		"x-inner-ntwk":         "2",
+		"x-m4c-caller":         "PC",
+		"x-m4c-src":            "10002",
+		"x-SvcType":            svcType,
+		"X-Yun-Api-Version":    "v1",
+		"X-Yun-App-Channel":    "10000034",
+		"X-Yun-Channel-Source": "10000034",
+		"X-Yun-Client-Info":    "||9|7.13.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+		"X-Yun-Module-Type":    "100",
+		"X-Yun-Svc-Type":       "1",
+	})
+
+	var e BaseResp
+	req.SetResult(&e)
+	res, err := req.Execute(method, url)
+	if err != nil {
+		return nil, err
+	}
+	log.Debugln(res.String())
+	if !e.Success {
+		return nil, errors.New(e.Message)
+	}
+	if resp != nil {
+		err = utils.Json.Unmarshal(res.Body(), resp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res.Body(), nil
+}
+func (d *Yun139) personalPost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
+	return d.personalRequest(pathname, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, resp)
+}
+
+func getPersonalTime(t string) time.Time {
+	stamp, err := time.ParseInLocation("2006-01-02T15:04:05.999-07:00", t, utils.CNLoc)
+	if err != nil {
+		panic(err)
+	}
+	return stamp
+}
+
+func (d *Yun139) personalGetFiles(fileId string) ([]model.Obj, error) {
+	files := make([]model.Obj, 0)
+	nextPageCursor := ""
+	for {
+		data := base.Json{
+			"imageThumbnailStyleList": []string{"Small", "Large"},
+			"orderBy":                 "updated_at",
+			"orderDirection":          "DESC",
+			"pageInfo": base.Json{
+				"pageCursor": nextPageCursor,
+				"pageSize":   100,
+			},
+			"parentFileId": fileId,
+		}
+		var resp PersonalListResp
+		_, err := d.personalPost("/hcy/file/list", data, &resp)
+		if err != nil {
+			return nil, err
+		}
+		nextPageCursor = resp.Data.NextPageCursor
+		for _, item := range resp.Data.Items {
+			var isFolder = (item.Type == "folder")
+			var f model.Obj
+			if isFolder {
+				f = &model.Object{
+					ID:       item.FileId,
+					Name:     item.Name,
+					Size:     0,
+					Modified: getPersonalTime(item.UpdatedAt),
+					Ctime:    getPersonalTime(item.CreatedAt),
+					IsFolder: isFolder,
+				}
+			} else {
+				var Thumbnails = item.Thumbnails
+				var ThumbnailUrl string
+				if len(Thumbnails) > 0 {
+					ThumbnailUrl = Thumbnails[len(Thumbnails)-1].Url
+				}
+				f = &model.ObjThumb{
+					Object: model.Object{
+						ID:       item.FileId,
+						Name:     item.Name,
+						Size:     item.Size,
+						Modified: getPersonalTime(item.UpdatedAt),
+						Ctime:    getPersonalTime(item.CreatedAt),
+						IsFolder: isFolder,
+					},
+					Thumbnail: model.Thumbnail{Thumbnail: ThumbnailUrl},
+				}
+			}
+			files = append(files, f)
+		}
+		if len(nextPageCursor) == 0 {
+			break
+		}
+	}
+	return files, nil
+}
+
+func (d *Yun139) personalGetLink(fileId string) (string, error) {
+	data := base.Json{
+		"fileId": fileId,
+	}
+	res, err := d.personalPost("/hcy/file/getDownloadUrl",
+		data, nil)
+	if err != nil {
+		return "", err
+	}
+	var cdnUrl = jsoniter.Get(res, "data", "cdnUrl").ToString()
+	if cdnUrl != "" {
+		return cdnUrl, nil
+	} else {
+		return jsoniter.Get(res, "data", "url").ToString(), nil
+	}
 }

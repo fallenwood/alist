@@ -6,6 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"golang.org/x/time/rate"
+	"io"
+	"net/http"
+	"net/url"
+	"sync"
+	"time"
+
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
@@ -17,14 +24,12 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
-	"io"
-	"net/http"
-	"net/url"
 )
 
 type Pan123 struct {
 	model.Storage
 	Addition
+	apiRateLimit sync.Map
 }
 
 func (d *Pan123) Config() driver.Config {
@@ -48,7 +53,7 @@ func (d *Pan123) Drop(ctx context.Context) error {
 }
 
 func (d *Pan123) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	files, err := d.getFiles(dir.GetID())
+	files, err := d.getFiles(ctx, dir.GetID(), dir.GetName())
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +82,7 @@ func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 			"type":      f.Type,
 		}
 		resp, err := d.request(DownloadInfo, http.MethodPost, func(req *resty.Request) {
+			
 			req.SetBody(data).SetHeaders(headers)
 		}, nil)
 		if err != nil {
@@ -189,7 +195,7 @@ func (d *Pan123) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	defer func() {
 		_ = tempFile.Close()
 	}()
-	if _, err = io.Copy(h, tempFile); err != nil {
+	if _, err = utils.CopyWithBuffer(h, tempFile); err != nil {
 		return err
 	}
 	_, err = tempFile.Seek(0, io.SeekStart)
@@ -232,6 +238,9 @@ func (d *Pan123) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			return err
 		}
 		uploader := s3manager.NewUploader(s)
+		if stream.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
+			uploader.PartSize = stream.GetSize() / (s3manager.MaxUploadParts - 1)
+		}
 		input := &s3manager.UploadInput{
 			Bucket: &resp.Data.Bucket,
 			Key:    &resp.Data.Key,
@@ -239,15 +248,20 @@ func (d *Pan123) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		}
 		_, err = uploader.UploadWithContext(ctx, input)
 	}
-	if err != nil {
-		return err
-	}
 	_, err = d.request(UploadComplete, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(base.Json{
 			"fileId": resp.Data.FileId,
 		}).SetContext(ctx)
 	}, nil)
 	return err
+}
+
+func (d *Pan123) APIRateLimit(ctx context.Context, api string) error {
+	value, _ := d.apiRateLimit.LoadOrStore(api,
+		rate.NewLimiter(rate.Every(700*time.Millisecond), 1))
+	limiter := value.(*rate.Limiter)
+
+	return limiter.Wait(ctx)
 }
 
 var _ driver.Driver = (*Pan123)(nil)

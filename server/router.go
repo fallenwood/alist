@@ -36,6 +36,7 @@ func Init(e *gin.Engine) {
 		g.Use(middlewares.MaxAllowed(conf.Conf.MaxConnections))
 	}
 	WebDav(g.Group("/dav"))
+	S3(g.Group("/s3"))
 
 	g.GET("/d/*path", middlewares.Down, handles.Down)
 	g.GET("/p/*path", middlewares.Down, handles.Proxy)
@@ -48,10 +49,12 @@ func Init(e *gin.Engine) {
 
 	api.POST("/auth/login", handles.Login)
 	api.POST("/auth/login/hash", handles.LoginHash)
+	api.POST("/auth/login/ldap", handles.LoginLdap)
 	auth.GET("/me", handles.CurrentUser)
 	auth.POST("/me/update", handles.UpdateCurrent)
 	auth.POST("/auth/2fa/generate", handles.Generate2FA)
 	auth.POST("/auth/2fa/verify", handles.Verify2FA)
+	auth.GET("/auth/logout", handles.LogOut)
 
 	// auth
 	api.GET("/auth/sso", handles.SSOLoginRedirect)
@@ -59,7 +62,7 @@ func Init(e *gin.Engine) {
 	api.GET("/auth/get_sso_id", handles.SSOLoginCallback)
 	api.GET("/auth/sso_get_token", handles.SSOLoginCallback)
 
-	//webauthn
+	// webauthn
 	webauthn.GET("/webauthn_begin_registration", handles.BeginAuthnRegistration)
 	webauthn.POST("/webauthn_finish_registration", handles.FinishAuthnRegistration)
 	webauthn.GET("/webauthn_begin_login", handles.BeginAuthnLogin)
@@ -70,8 +73,10 @@ func Init(e *gin.Engine) {
 	// no need auth
 	public := api.Group("/public")
 	public.Any("/settings", handles.PublicSettings)
+	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
 
 	_fs(auth.Group("/fs"))
+	_task(auth.Group("/task", middlewares.AuthNotGuest))
 	admin(auth.Group("/admin", middlewares.AuthAdmin))
 	if flags.Debug || flags.Dev {
 		debug(g.Group("/debug"))
@@ -121,9 +126,10 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/reset_token", handles.ResetToken)
 	setting.POST("/set_aria2", handles.SetAria2)
 	setting.POST("/set_qbit", handles.SetQbittorrent)
+	setting.POST("/set_transmission", handles.SetTransmission)
 
-	task := g.Group("/task")
-	handles.SetupTaskRoute(task)
+	// retain /admin/task API to ensure compatibility with legacy automation scripts
+	_task(g.Group("/task"))
 
 	ms := g.Group("/message")
 	ms.POST("/get", message.HttpInstance.GetHandle)
@@ -155,14 +161,26 @@ func _fs(g *gin.RouterGroup) {
 	g.PUT("/put", middlewares.FsUp, handles.FsStream)
 	g.PUT("/form", middlewares.FsUp, handles.FsForm)
 	g.POST("/link", middlewares.AuthAdmin, handles.Link)
-	g.POST("/add_aria2", handles.AddAria2)
-	g.POST("/add_qbit", handles.AddQbittorrent)
+	// g.POST("/add_aria2", handles.AddOfflineDownload)
+	// g.POST("/add_qbit", handles.AddQbittorrent)
+	// g.POST("/add_transmission", handles.SetTransmission)
+	g.POST("/add_offline_download", handles.AddOfflineDownload)
+}
+
+func _task(g *gin.RouterGroup) {
+	handles.SetupTaskRoute(g)
 }
 
 func Cors(r *gin.Engine) {
 	config := cors.DefaultConfig()
-	config.AllowAllOrigins = true
-	config.AllowHeaders = []string{"*"}
-	config.AllowMethods = []string{"*"}
+	// config.AllowAllOrigins = true
+	config.AllowOrigins = conf.Conf.Cors.AllowOrigins
+	config.AllowHeaders = conf.Conf.Cors.AllowHeaders
+	config.AllowMethods = conf.Conf.Cors.AllowMethods
 	r.Use(cors.New(config))
+}
+
+func InitS3(e *gin.Engine) {
+	Cors(e)
+	S3Server(e.Group("/"))
 }
