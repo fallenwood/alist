@@ -33,6 +33,8 @@ const (
 	PreviewArchivesByDefault = "preview_archives_by_default"
 	ReadMeAutoRender         = "readme_autorender"
 	FilterReadMeScripts      = "filter_readme_scripts"
+	DandanplayDanmakuEnabled = "dandanplay_danmaku_enabled"
+
 	// global
 	HideFiles               = "hide_files"
 	CustomizeHead           = "customize_head"

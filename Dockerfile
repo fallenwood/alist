@@ -5,7 +5,7 @@ RUN apk add --no-cache bash curl gcc git go musl-dev
 COPY go.mod go.sum ./
 RUN go mod download
 COPY ./ ./
-RUN bash build.sh release docker
+RUN bash build.sh local docker
 
 FROM alpine:edge
 

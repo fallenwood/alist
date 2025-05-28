@@ -9,6 +9,9 @@ if [ "$1" = "dev" ]; then
 elif [ "$1" = "beta" ]; then
   version="beta"
   webVersion="dev"
+elif [ "$1" = "local" ]; then
+  version="local"
+  webVersion="local"
 else
   git tag -d beta
   version=$(git describe --abbrev=0 --tags)
@@ -336,6 +339,8 @@ elif [ "$1" = "prepare" ]; then
   fi
 elif [ "$1" = "zip" ]; then
   MakeRelease "$2".txt
+elif [ "$1" = "local" ]; then
+  BuildDocker
 else
   echo -e "Parameter error"
 fi
